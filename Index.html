@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HelioDrive Sync | Accès au Tableau de Bord</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    /* ========================================================
+    CSS Variables & Global Styles
+    ======================================================== */
+    :root {
+      --solar-yellow: #F9D71C;
+      --solar-orange: #FFA630;
+      --eco-green: #4CAF50;
+      --sky-blue: #87CEEB;
+      --earth-brown: #8B4513;
+      --primary-dark: #2C3E50;
+      --text-light: #F8F9FA;
+      --card-bg: rgba(255, 255, 255, 0.98); /* Almost opaque */
+      --shadow-subtle: 0 8px 30px rgba(0, 0, 0, 0.12);
+      --input-border: #E0E0E0;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', 'Open Sans', sans-serif;
+    }
+
+    body {
+      background: linear-gradient(135deg, var(--sky-blue), #E0F7FA);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Subtle background grid effect */
+    body::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: repeating-linear-gradient(
+          45deg,
+          transparent,
+          transparent 10px,
+          rgba(255, 255, 255, 0.2) 10px,
+          rgba(255, 255, 255, 0.2) 11px
+      );
+      opacity: 0.1;
+      z-index: -1;
+    }
+
+    /* ========================================================
+    Login Card
+    ======================================================== */
+    .login-container {
+      background: var(--card-bg);
+      border-radius: 20px; /* More modern radius */
+      box-shadow: var(--shadow-subtle);
+      padding: 40px;
+      width: 100%;
+      max-width: 420px;
+      text-align: center;
+      backdrop-filter: blur(5px);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      transition: all 0.4s ease;
+    }
+
+    .login-container:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+    }
+
+    /* ========================================================
+    Header & Typography
+    ======================================================== */
+    .logo-header {
+      margin-bottom: 30px;
+    }
+    
+    .logo-icon {
+      font-size: 3rem;
+      color: var(--solar-orange);
+      background: radial-gradient(circle, var(--solar-yellow) 30%, transparent 70%);
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 10px;
+      box-shadow: 0 0 15px rgba(249, 215, 28, 0.4);
+    }
+
+    h1 {
+      color: var(--primary-dark);
+      margin-bottom: 5px;
+      font-weight: 700;
+      font-size: 1.8rem;
+    }
+
+    .tagline {
+      color: var(--eco-green);
+      font-weight: 500;
+      font-size: 1rem;
+    }
+
+    /* ========================================================
+    Form Elements
+    ======================================================== */
+    .input-group {
+      margin-bottom: 20px;
+      text-align: left;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--primary-dark);
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    input {
+      width: 100%;
+      padding: 14px 15px;
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      font-size: 16px;
+      transition: all 0.3s;
+      background-color: var(--text-light);
+    }
+
+    input:focus {
+      outline: none;
+      border-color: var(--eco-green);
+      box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.2);
+    }
+
+    .error-message {
+      color: #e74c3c;
+      font-size: 0.8rem;
+      margin-top: 5px;
+      display: none;
+    }
+    
+    /* ========================================================
+    Button & Loading
+    ======================================================== */
+
+    .btn-login {
+      width: 100%;
+      padding: 15px;
+      background: linear-gradient(to right, var(--eco-green), #66BB6A);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-top: 20px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .btn-login:hover:not(:disabled) {
+      background: linear-gradient(to right, #43A047, var(--eco-green));
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-login:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+    }
+
+    /* Loading animation */
+    .spinner {
+      display: none;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      animation: spin 1s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ========================================================
+    Responsive Design
+    ======================================================== */
+    @media (max-width: 500px) {
+      .login-container {
+        padding: 25px;
+        margin: 0 10px;
+      }
+      .logo-icon {
+        font-size: 2.5rem;
+        width: 60px;
+        height: 60px;
+      }
+    }
+
+  </style>
+</head>
+<body>
+  
+  <main class="login-container">
+    <div class="logo-header">
+      <div class="logo-icon">
+        <i class="fas fa-solar-panel"></i>
+      </div>
+      
+      <h1>HelioDrive Sync</h1>
+      <p class="tagline">Une énergie intelligente pour un monde plus propre</p>
+    </div>
+    
+    <form id="login-form" onsubmit="event.preventDefault(); handleLogin();">
+        <div class="input-group">
+          <label for="username"><i class="fas fa-user"></i> Nom d'utilisateur </label>
+          <input type="text" id="username" placeholder="ClientXXXX (pour accès client)" autocomplete="username" required />
+          <div id="username-error" class="error-message"></div>
+        </div>
+        
+        <div class="input-group">
+          <label for="password"><i class="fas fa-lock"></i> Mot de passe </label>
+          <input type="password" id="password" placeholder="Entrer le Mot de passe" autocomplete="current-password" required />
+          <div id="password-error" class="error-message"></div>
+        </div>
+        
+        <button type="submit" class="btn-login" id="login-btn">
+          <span id="btn-text">Connecter</span>
+          <span id="btn-spinner" class="spinner"></span>
+        </button>
+    </form>
+  </main>
+ 
+</body>
+
+  <script>
+    function showError(elementId, message) {
+      const element = document.getElementById(elementId);
+      element.textContent = message;
+      element.style.display = 'block';
+      // Add visual error cue to input field
+      document.getElementById(elementId.replace('-error', '')).style.borderColor = '#e74c3c';
+    }
+
+    function hideError(elementId) {
+      document.getElementById(elementId).style.display = 'none';
+      document.getElementById(elementId.replace('-error', '')).style.borderColor = 'var(--input-border)';
+    }
+
+    function showLoading() {
+      document.getElementById('btn-text').style.display = 'none';
+      document.getElementById('btn-spinner').style.display = 'block';
+      document.getElementById('login-btn').disabled = true;
+    }
+
+    function hideLoading() {
+      document.getElementById('btn-text').style.display = 'block';
+      document.getElementById('btn-spinner').style.display = 'none';
+      document.getElementById('login-btn').disabled = false;
+    }
+
+    function handleLogin() {
+      const usernameField = document.getElementById("username");
+      const passwordField = document.getElementById("password");
+      const username = usernameField.value.trim();
+      const password = passwordField.value;
+      let isValid = true;
+
+      // Reset errors
+      hideError('username-error');
+      hideError('password-error');
+      
+      // Validate inputs
+      if (!username) {
+        showError('username-error', 'Le nom d\'utilisateur est requis.');
+        isValid = false;
+      } else if (!username.toLowerCase().startsWith("client")) {
+        showError('username-error', 'Le nom d\'utilisateur doit commencer par "Client".');
+        isValid = false;
+      }
+      
+      if (!password) {
+        showError('password-error', 'Le mot de passe est requis.');
+        isValid = false;
+      }
+
+      if (!isValid) return;
+
+      showLoading();
+
+      // --- Simulation of Authentication Check (Replace with actual API call if needed) ---
+      setTimeout(() => {
+        // Store credentials for MQTT connection in the next page (client.html)
+        sessionStorage.setItem("mqttUsername", username);
+        sessionStorage.setItem("mqttPassword", password);
+
+        // Success: Redirect to the client dashboard
+        window.location.href = "client.html";
+        
+        // --- Simulated Failure Example ---
+        /*
+        if (username === "Client1234" && password === "correct_password") {
+            sessionStorage.setItem("mqttUsername", username);
+            sessionStorage.setItem("mqttPassword", password);
+            window.location.href = "client.html";
+        } else {
+            hideLoading();
+            showError('password-error', 'Nom d\'utilisateur ou mot de passe incorrect.');
+        }
+        */
+        // ------------------------------------------------------------------------
+      }, 800);
+    }
+
+    // Focus username field on page load
+    window.onload = function() {
+      document.getElementById("username").focus();
+    };
+  </script>
+</html>
