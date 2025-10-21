@@ -310,19 +310,19 @@
 
       // --- Simulation of Authentication Check (Replace with actual API call if needed) ---
       setTimeout(() => {
-        // Store credentials for MQTT connection in the next page (client.html)
+        // Store credentials for MQTT connection in the next page (Client.html)
         sessionStorage.setItem("mqttUsername", username);
         sessionStorage.setItem("mqttPassword", password);
 
         // Success: Redirect to the client dashboard
-        window.location.href = "client.html";
+        window.location.href = "Client.html";
         
         // --- Simulated Failure Example ---
         /*
         if (username === "Client1234" && password === "correct_password") {
             sessionStorage.setItem("mqttUsername", username);
             sessionStorage.setItem("mqttPassword", password);
-            window.location.href = "client.html";
+            window.location.href = "Client.html";
         } else {
             hideLoading();
             showError('password-error', 'Nom d\'utilisateur ou mot de passe incorrect.');
