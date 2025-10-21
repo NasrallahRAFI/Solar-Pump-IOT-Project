@@ -1,0 +1,66 @@
+#ifndef ESP32VFD_H
+#define ESP32VFD_H
+
+#include <HardwareSerial.h>
+#include <ModbusMaster.h>
+
+// ===== Hardware Configuration =====
+#define VFD_SLAVE_ID 1       // MODBUS address of VFD (F0.03)
+#define RS485_RX_PIN 16
+#define RS485_TX_PIN 17
+#define RS485_DE_PIN 4       // MAX485 DE/RE control pin
+
+// ===== Modbus Objects =====
+extern ModbusMaster node;               // Declared externally, defined in the main sketch
+extern HardwareSerial SerialRS485;      // Declared externally, defined in the main sketch
+
+// ===== VFD Register Map Structure =====
+// Structure to hold VFD parameters, including its MQTT topic for unified handling
+typedef struct {
+  const char* name;      // Parameter name (JSON key for aggregated data)
+  uint16_t address;      // MODBUS register address
+  float scale;           // Scaling factor (e.g., 0.01 for x/100)
+  const char* unit;      // Measurement unit (for reference)
+  const char* topic;     // MQTT Topic for individual publishing
+} VfdRegister;
+
+// VFD Register List (Veichi SI23 based on project data)
+VfdRegister vfdRegisters[] = {
+  {"frequency", 0x1001, 0.01, "Hz", "vfd/speed"},           // Output speed
+  {"temperature", 0x100D, 0.1, "°C", "vfd/temperature"},      // Temperature
+  {"input_voltage", 0x1005, 0.1, "V", "vfd/tensionIN"},     // Input voltage
+  {"output_current", 0x1003, 0.01, "A", "vfd/courantOUT"},  // Output current
+  {"input_current", 0x1006, 0.01, "A", "vfd/courantIN"},    // Input current
+  {"status_code", 0x2001, 1.0, "", "vfd/status_code"},      // Read-only status code
+  {"alarms_code", 0x2002, 1.0, "", "vfd/alertes"},          // Alarm codes
+  {"speed_setpoint", 0x1000, 0.01, "Hz", "vfd/speed_setpoint_read"} // Current command value
+};
+const uint8_t VFD_REG_COUNT = sizeof(vfdRegisters) / sizeof(vfdRegisters[0]);
+
+// ===== Modbus Control Functions =====
+
+// Pre-transmission: Enable MAX485 transmission
+void preTransmission() {
+  digitalWrite(RS485_DE_PIN, HIGH);
+}
+
+// Post-transmission: Disable transmission (return to receive mode)
+void postTransmission() {
+  digitalWrite(RS485_DE_PIN, LOW);
+}
+
+// Setup function for VFD/Modbus interface
+void setupModbusInterface() {
+  pinMode(RS485_DE_PIN, OUTPUT);
+  digitalWrite(RS485_DE_PIN, LOW);   // Start in receive mode
+
+  SerialRS485.begin(9600, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN);  // RS485 at 9600 baud (8N1)
+
+  node.begin(VFD_SLAVE_ID, SerialRS485);
+  node.preTransmission(preTransmission);
+  node.postTransmission(postTransmission);
+
+  Serial.println("MODBUS RTU Interface Initialized.");
+}
+
+#endif // ESP32VFD_H
