@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HelioDrive IoT Dashboard</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://unpkg.com/paho-mqtt@1.1.0/paho-mqtt-min.js"></script>
+  <style>
+    /* ========================================================
+    Aesthetics & Variables (Minor Refactoring for Clarity)
+    ========================================================
+    */
+    :root {
+      --primary: #2c3e50;
+      --secondary: #3498db;
+      --accent: #2ecc71;
+      --danger: #e74c3c;
+      --warning: #f39c12;
+      --light: #ecf0f1;
+      --dark: #1a252f;
+      --card-bg: rgba(255, 255, 255, 0.95); /* Slightly less transparent */
+      --shadow: 0 6px 25px rgba(0, 0, 0, 0.15); /* Stronger shadow */
+      --border-color: #ddd;
+      --sky-blue: #87CEEB;
+      --button-hover-scale: 1.05; /* Consistent scale factor */
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    body {
+      background: linear-gradient(135deg, var(--sky-blue), #E0F7FA);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    header {
+      background: var(--card-bg);
+      border-radius: 15px;
+      padding: 20px;
+      margin-bottom: 25px;
+      box-shadow: var(--shadow);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .logo i {
+      font-size: 2.5rem;
+      color: var(--secondary);
+    }
+
+    .logo h1 {
+      font-size: 1.8rem;
+      color: var(--primary);
+    }
+
+    .logo span {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .status-indicators {
+      display: flex;
+      gap: 20px;
+    }
+
+    .indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      color: var(--primary);
+    }
+
+    .indicator .led {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ccc;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+
+    .indicator.active .led {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+    
+    .indicator.danger .led {
+      background: var(--danger);
+      box-shadow: 0 0 8px var(--danger);
+    }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin-bottom: 25px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 15px;
+      box-shadow: var(--shadow);
+      padding: 25px;
+      transition: transform 0.3s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-5px);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+    }
+
+    .card-header i {
+      font-size: 1.8rem;
+      color: var(--secondary);
+    }
+
+    .card-header h2 {
+      font-size: 1.4rem;
+      color: var(--primary);
+    }
+    
+    /* ========================================================
+    Refactored Data Display Components (ValueBox)
+    ========================================================
+    */
+    .data-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 15px;
+      margin-top: 15px;
+    }
+
+    .value-box {
+        background: #f4f6f9;
+        border-radius: 8px;
+        padding: 15px;
+        text-align: center;
+        transition: all 0.2s;
+        border: 1px solid #e0e0e0;
+    }
+    
+    .value-box:hover {
+        background: #e9ecef;
+    }
+
+    .value-box-label {
+        font-size: 0.85rem;
+        color: #6c757d;
+        margin-bottom: 5px;
+        font-weight: 500;
+    }
+
+    .value-box-value {
+        font-size: 1.6rem;
+        font-weight: 800;
+        color: var(--primary);
+    }
+    
+    /* ========================================================
+    Control Components (Buttons, Slider)
+    ========================================================
+    */
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .control-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .btn {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-grow: 1; /* Make buttons grow equally */
+      justify-content: center;
+    }
+
+    .btn-primary {
+      background: var(--secondary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #2980b9;
+      transform: scale(var(--button-hover-scale));
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: #c0392b;
+      transform: scale(var(--button-hover-scale));
+    }
+
+    .btn-success {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-success:hover {
+      background: #27ae60;
+      transform: scale(var(--button-hover-scale));
+    }
+    
+    .btn-action {
+        background: var(--warning);
+        color: var(--primary);
+    }
+    
+    .btn-action:hover {
+        background: #f1c40f;
+        transform: scale(var(--button-hover-scale));
+    }
+
+    .slider-container {
+      width: 100%;
+      padding: 15px 0;
+    }
+
+    .slider {
+      width: 100%;
+      height: 20px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: linear-gradient(to right, var(--accent), var(--warning), var(--danger));
+      outline: none;
+      border-radius: 10px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.1);
+    }
+
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--primary);
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(0,0,0,0.2);
+    }
+
+    .value-display {
+      text-align: center;
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-top: 10px;
+      color: var(--primary);
+    }
+
+    /* ========================================================
+    Pump Status & Gauges
+    ========================================================
+    */
+    
+    .pump-status {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+      padding: 20px 0;
+    }
+
+    .pump-icon {
+      font-size: 4rem;
+      color: var(--accent);
+      transition: all 0.5s ease;
+    }
+
+    .pump-icon.off {
+      color: #ccc;
+    }
+
+    .status-text {
+      font-size: 1.3rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .gauge label {
+      font-weight: 600;
+      color: var(--primary);
+      margin-bottom: 5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .gauge-bar {
+      background-color: #e0e0e0;
+      border-radius: 25px;
+      overflow: hidden;
+      height: 24px;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+      margin-top: 5px;
+    }
+
+    .gauge-fill {
+      height: 100%;
+      color: white;
+      text-align: right;
+      padding-right: 10px;
+      line-height: 24px;
+      font-weight: bold;
+      transition: width 0.6s ease-in-out;
+      border-radius: 25px;
+      min-width: 25px; /* Ensure text is visible even for low values */
+    }
+
+    #water-fill {
+      background: linear-gradient(to right, #3498db, #87ceeb);
+    }
+    
+    /* ========================================================
+    Panel & Alerts
+    ========================================================
+    */
+
+    .panel-header {
+      cursor: pointer;
+      background-color: #ecf0f1;
+      border-radius: 10px; /* Increased radius for modern look */
+      padding: 15px 20px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      transition: all 0.3s;
+      font-weight: 600;
+    }
+
+    .panel-header:hover {
+      background-color: #dfe6e9;
+    }
+
+    .panel-icon {
+      margin-right: 10px;
+      font-size: 18px;
+    }
+
+    .panel-content {
+      padding: 20px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .alert {
+      padding: 12px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+    }
+
+    .alert-warning {
+      background-color: #fff3cd;
+      border-left: 4px solid var(--warning);
+      color: #856404;
+    }
+
+    .alert-danger {
+      background-color: #f8d7da;
+      border-left: 4px solid var(--danger);
+      color: #721c24;
+    }
+
+    #log {
+      margin-top: 20px;
+      padding: 15px;
+      background: #eaf2f8;
+      border-left: 4px solid var(--secondary);
+      font-size: 14px;
+      white-space: pre-wrap;
+      max-height: 250px; /* Slightly taller log */
+      overflow-y: auto;
+      border-radius: 4px;
+    }
+
+    /* ========================================================
+    Schedule Control Styles (Simplified/Refined)
+    ========================================================
+    */
+    .schedule-container {
+      margin-top: 20px;
+    }
+
+    .schedule-item {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      border-left: 4px solid var(--secondary);
+      transition: border-color 0.3s;
+    }
+    
+    .schedule-item.inactive {
+        border-left: 4px solid #ccc;
+        opacity: 0.7;
+    }
+
+    .schedule-details {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .schedule-controls {
+      display: flex;
+      gap: 10px;
+    }
+
+    .schedule-day-selector {
+      display: flex;
+      gap: 5px;
+    }
+
+    .day-chip {
+      padding: 5px 10px;
+      border-radius: 20px;
+      background: #e0e0e0;
+      cursor: pointer;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+    }
+
+    .day-chip.active {
+      background: var(--secondary);
+      color: white;
+    }
+    
+    .time-control {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+    }
+
+    .time-input {
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+      width: 100px;
+    }
+
+    .add-schedule-btn {
+      margin-top: 10px;
+      width: 100%;
+    }
+
+    /* ========================================================
+    Conditional Formatting & Media Queries
+    ========================================================
+    */
+    .critical { color: var(--danger); font-weight: bold; }
+    .warning { color: var(--warning); font-weight: bold; }
+    .normal { color: var(--accent); }
+
+    @media (max-width: 768px) {
+      header {
+        flex-direction: column;
+        gap: 15px;
+      }
+
+      .status-indicators {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .dashboard {
+        grid-template-columns: 1fr;
+      }
+      
+      .data-grid {
+          grid-template-columns: 1fr;
+      }
+
+      .schedule-item {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .schedule-controls {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: 10px;
+      }
+      
+      .time-control {
+          flex-direction: column;
+          align-items: flex-start;
+      }
+    }
+    
+    /* Footer Style */
+    footer {
+        background: var(--primary);
+        color: var(--light);
+        text-align: center;
+        padding: 1rem;
+        margin-top: 2rem;
+        font-size: 0.9rem;
+        border-radius: 15px;
+    }
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <i class="fas fa-water"></i>
+        <h1>HelioDrive <span>DASHBOARD</span></h1>
+      </div>
+      <div class="status-indicators">
+        <div class="indicator active" id="mqtt-indicator">
+          <div class="led"></div>
+          <span id="mqtt-status-text">MQTT Déconnecté</span>
+        </div>
+        <div class="indicator" id="wifi-indicator">
+          <div class="led"></div>
+          <span id="wifi-status-text">WiFi Déconnecté</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="dashboard">
+
+      <div class="card">
+        <div class="card-header">
+          <i class="fas fa-chart-line"></i>
+          <h2>Vue d'ensemble et État</h2>
+        </div>
+        <div class="data-grid">
+            <div class="value-box">
+                <div class="value-box-label">Température Moteur</div>
+                <div class="value-box-value" id="temperature">--</div>
+            </div>
+            <div class="value-box">
+                <div class="value-box-label">Vitesse (Hz)</div>
+                <div class="value-box-value" id="speed">--</div>
+            </div>
+             <div class="value-box">
+                <div class="value-box-label">Niveau d'Eau</div>
+                <div class="value-box-value" id="niveauEau">--</div>
+            </div>
+            <div class="value-box">
+                <div class="value-box-label">Statut VFD</div>
+                <div class="value-box-value" id="status">--</div>
+            </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <i class="fas fa-power-off"></i>
+          <h2>Contrôle Pompe & Vitesse</h2>
+        </div>
+        <div class="control-group">
+          <div class="pump-status">
+            <i class="fas fa-water-pump pump-icon off"></i>
+            <div class="status-text" id="pump-status-text">ARRÊTÉ</div>
+          </div>
+          
+          <div class="control-row">
+            <button class="btn btn-success" onclick="sendMotorCommand('on')">
+              <i class="fas fa-play"></i> Démarrer
+            </button>
+            <button class="btn btn-danger" onclick="sendMotorCommand('off')">
+              <i class="fas fa-stop"></i> Arrêter
+            </button>
+            <button class="btn btn-action" onclick="sendMotorCommand('auto')">
+              <i class="fas fa-sync-alt"></i> Auto
+            </button>
+          </div>
+          
+          <div class="slider-container">
+            <label for="speed-slider" style="display: block; margin-bottom: 5px; font-weight: 600;">Fréquence de sortie (Hz)</label>
+            <input type="range" min="0" max="100" value="0" class="slider" id="speed-slider">
+            <div class="value-display" id="speed-slider-value">0 Hz</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="panel-header" role="button" aria-expanded="false" aria-controls="electrical-data" onclick="togglePanel('electrical-data')">
+      <div class="panel-icon">⚡</div>
+      <div>Données Électriques Détaillées</div>
+    </div>
+    <div id="electrical-data" class="panel-content" aria-hidden="true">
+      <div class="data-grid">
+        <div class="value-box">
+          <div class="value-box-label">Tension Entrée (V)</div>
+          <div class="value-box-value" id="tensionIN">--</div>
+        </div>
+        <div class="value-box">
+          <div class="value-box-label">Courant Entrée (A)</div>
+          <div class="value-box-value" id="courantIN">--</div>
+        </div>
+        <div class="value-box">
+          <div class="value-box-label">Courant Sortie (A)</div>
+          <div class="value-box-value" id="courantOUT">--</div>
+        </div>
+         <div class="value-box">
+          <div class="value-box-label">Réseau WiFi (dBm)</div>
+          <div class="value-box-value" id="rssi">--</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-header" role="button" aria-expanded="false" aria-controls="storage-health-data" onclick="togglePanel('storage-health-data')">
+      <div class="panel-icon">💧</div>
+      <div>Stockage & Maintenance</div>
+    </div>
+   <div id="storage-health-data" class="panel-content" aria-hidden="true">
+    <div class="gauge-group">
+        <div class="gauge">
+          <label for="water-fill"><i class="fas fa-tint"></i> Niveau d'eau du Réservoir</label>
+          <div class="gauge-bar">
+            <div class="gauge-fill" id="water-fill" style="width: 0%;">0%</div>
+          </div>
+        </div>
+    </div>
+    <div id="alerte-niveau-eau-container"></div>
+    <div class="data-grid" style="margin-top: 20px;">
+        <div class="value-box">
+          <div class="value-box-label">Alertes Actives</div>
+          <div class="value-box-value" id="alertes">Aucune</div>
+        </div>
+        <div class="value-box">
+          <div class="value-box-label">État du Réseau</div>
+          <div class="value-box-value" id="etatReseau">--</div>
+        </div>
+    </div>
+ </div>
+ 
+    <div class="panel-header" role="button" aria-expanded="false" aria-controls="communication-log" onclick="togglePanel('communication-log')">
+      <div class="panel-icon">📡</div>
+      <div>Journal de Communication</div>
+    </div>
+    <div id="communication-log" class="panel-content" aria-hidden="true">
+      <div id="log">📡 En attente de données MQTT...</div>
+    </div>
+
+    <div class="card" style="margin-top: 20px;">
+      <div class="card-header">
+        <i class="fas fa-clock"></i>
+        <h2>Programmation Automatique</h2>
+      </div>
+      <div class="schedule-container" id="schedule-container">
+        </div>
+      <button class="btn btn-primary add-schedule-btn" onclick="addNewSchedule()">
+        <i class="fas fa-plus"></i> Ajouter une programmation
+      </button>
+    </div>
+  </div>
+
+<footer>
+  <p>&copy; 2025 HelioDrive IOT • Énergie propre pour un avenir durable.</p>
+</footer>
+
+  <script>
+    // ========================================================
+    // Configuration MQTT
+    // ========================================================
+    const MQTT_BROKER_URL = "wss://508205b2e19c4a7fad9828d3961d6424.s1.eu.hivemq.cloud:8884/mqtt";
+    const MQTT_CLIENT_PREFIX = "client_web_";
+    
+    // Define all data element IDs and their corresponding MQTT topics
+    const DATA_MAPPINGS = {
+        // Data Topics (ESP32 -> Web)
+        temperature: { topic: "vfd/temperature", unit: "°C", elementId: "temperature" },
+        speed: { topic: "vfd/speed", unit: "Hz", elementId: "speed" },
+        status: { topic: "vfd/status", unit: "", elementId: "status" },
+        tensionIN: { topic: "vfd/tensionIN", unit: "V", elementId: "tensionIN" },
+        courantIN: { topic: "vfd/courantIN", unit: "A", elementId: "courantIN" },
+        courantOUT: { topic: "vfd/courantOUT", unit: "A", elementId: "courantOUT" },
+        niveauEau: { topic: "vfd/niveau_eau", unit: "%", elementId: "niveauEau" },
+        alertes: { topic: "vfd/alertes", unit: "", elementId: "alertes" },
+        etatReseau: { topic: "vfd/etat_reseau", unit: "", elementId: "etatReseau" },
+        rssi: { topic: "vfd/rssi", unit: "dBm", elementId: "rssi" },
+        // Control Topics (Web -> ESP32)
+        cmdStatus: { topic: "vfd/status" },
+        cmdSpeedInput: { topic: "vfd/Speedinput" },
+        cmdSchedule: { topic: "vfd/schedule" }
+    };
+    
+    // Utility to get a topic by its key name
+    const getTopic = (key) => DATA_MAPPINGS[key] ? DATA_MAPPINGS[key].topic : null;
+
+    let mqttClient = null;
+    let schedules = [];
+    let scheduleCheckInterval;
+
+    document.addEventListener('DOMContentLoaded', function() {
+      const username = sessionStorage.getItem("mqttUsername");
+      const password = sessionStorage.getItem("mqttPassword");
+
+      if (!username || !password) {
+        alert("Identifiants MQTT manquants. Veuillez vous reconnecter.");
+        window.location.href = "index.html";
+        return;
+      }
+
+      initializeMQTT(username, password);
+      loadSchedules();
+      startScheduleChecker();
+      
+      // Initialize Pump Status
+      updatePumpStatus('off'); 
+      
+      // Slider functionality
+      const slider = document.getElementById('speed-slider');
+      
+      slider.addEventListener('input', function() {
+        const value = this.value;
+        document.getElementById('speed-slider-value').textContent = value + ' Hz';
+        // Send speed value (0-100) directly as Hz setpoint for VFD
+        sendMotorCommand('Speedinput:' + value); 
+      });
+      
+      // Add default alert container for dynamic alerts
+      const storageHealthPanel = document.getElementById('storage-health-data');
+      const alertContainer = document.createElement('div');
+      alertContainer.id = 'dynamic-alerts';
+      storageHealthPanel.prepend(alertContainer);
+    });
+    
+    // ========================================================
+    // MQTT Initialization and Handling
+    // ========================================================
+
+    function initializeMQTT(username, password) {
+      const clientID = MQTT_CLIENT_PREFIX + Math.random().toString(16).substr(2, 8);
+      mqttClient = new Paho.Client(MQTT_BROKER_URL, clientID);
+
+      mqttClient.onConnectionLost = function(responseObject) {
+        logMessage("❌ Connexion perdue: " + responseObject.errorMessage);
+        updateConnectionStatus('mqtt', false, "Déconnecté");
+      };
+
+      mqttClient.onMessageArrived = function(message) {
+        const topic = message.destinationName;
+        const payload = message.payloadString;
+        const timestamp = new Date().toLocaleTimeString();
+
+        logMessage(`📥 ${timestamp} — [${topic}]: ${payload}`);
+        
+        // Find which parameter this topic belongs to
+        for (const key in DATA_MAPPINGS) {
+            const mapping = DATA_MAPPINGS[key];
+            if (mapping.topic === topic && mapping.elementId) {
+                updateDataDisplay(mapping.elementId, payload, mapping.unit);
+                handleSpecificUpdates(key, payload);
+                break;
+            }
+        }
+      };
+
+      mqttClient.connect({
+        useSSL: true,
+        userName: username,
+        password: password,
+        onSuccess: function() {
+          logMessage("✅ Connecté au broker MQTT");
+          updateConnectionStatus('mqtt', true, "Connecté");
+          
+          // Subscribe to all data topics
+          Object.values(DATA_MAPPINGS)
+                .filter(m => m.elementId)
+                .forEach(m => mqttClient.subscribe(m.topic));
+          
+          // Request current schedule
+          sendScheduleRequest();
+        },
+        onFailure: function(err) {
+          alert("Échec de connexion MQTT: " + err.errorMessage);
+          updateConnectionStatus('mqtt', false, "Échec");
+        }
+      });
+    }
+    
+    function updateConnectionStatus(type, isConnected, text) {
+        const indicator = document.getElementById(`${type}-indicator`);
+        const statusText = document.getElementById(`${type}-status-text`);
+        
+        if (indicator) {
+            indicator.classList.toggle('active', isConnected);
+            indicator.classList.toggle('danger', !isConnected);
+        }
+        if (statusText) {
+            statusText.textContent = text;
+        }
+        
+        // Note: For a real Wi-Fi status, the ESP32 should publish it to a topic
+        // We'll update the Wi-Fi status text to reflect the network topic
+        if (type === 'mqtt' && isConnected) {
+             document.getElementById('wifi-indicator').classList.add('active');
+             document.getElementById('wifi-status-text').textContent = 'Connecté';
+        }
+    }
+    
+    // ========================================================
+    // Data & UI Update Functions
+    // ========================================================
+    
+    function updateDataDisplay(elementId, payload, unit = '') {
+        const element = document.getElementById(elementId);
+        if (!element) return;
+
+        const numericValue = parseFloat(payload);
+        element.textContent = isNaN(numericValue) ? payload : (numericValue.toFixed(unit === 'Hz' || unit === 'A' ? 1 : 0) + unit);
+
+        // Reset and apply status class
+        element.classList.remove('critical', 'warning', 'normal');
+        
+        // Conditional formatting based on common parameters
+        if (elementId === "temperature") {
+            if (numericValue > 60) {
+                element.classList.add('critical');
+            } else if (numericValue > 45) {
+                element.classList.add('warning');
+            } else {
+                element.classList.add('normal');
+            }
+        } else if (elementId === "niveauEau") {
+            if (numericValue < 20) {
+                element.classList.add('critical');
+            } else if (numericValue < 50) {
+                element.classList.add('warning');
+            } else {
+                element.classList.add('normal');
+            }
+        }
+        
+        // Handle RSSI sign
+        if (elementId === 'rssi') {
+            element.textContent = payload + unit;
+        }
+    }
+
+    function handleSpecificUpdates(key, payload) {
+        const numericValue = parseFloat(payload);
+        
+        if (key === "status") {
+            updatePumpStatus(payload);
+        }
+        
+        if (key === "niveauEau") {
+            const percentage = Math.max(0, Math.min(100, numericValue)); // Clamp value
+            const fillElement = document.getElementById("water-fill");
+            if (fillElement) {
+                fillElement.style.width = percentage + "%";
+                fillElement.textContent = percentage + "%";
+            }
+            if (percentage < 15) {
+                showAlert(`⚠️ Niveau d'eau critique (${percentage}%)! Pompe arrêtée pour protection.`, "alert-danger");
+            } else if (percentage < 30) {
+                 showAlert(`❗ Niveau d'eau faible (${percentage}%).`, "alert-warning");
+            }
+        }
+        
+        if (key === "alertes" && payload !== "Aucune" && payload !== "") {
+             showAlert(`⚠️ ALERTE VFD: ${payload}`, "alert-danger");
+        }
+        
+        if (key === "etatReseau") {
+             if (payload.toUpperCase() !== "STABLE" && payload.toUpperCase() !== "OK") {
+                 showAlert(`⚠️ Problème de réseau: ${payload}`, "alert-danger");
+             }
+        }
+        
+        if (key === "schedule") {
+             try {
+                 schedules = JSON.parse(payload);
+                 renderSchedules();
+             } catch (e) {
+                 console.error("Error parsing schedule data:", e);
+             }
+        }
+    }
+
+    function updatePumpStatus(status) {
+      const pumpIcon = document.querySelector('.pump-icon');
+      const statusText = document.getElementById('pump-status-text');
+      
+      const isRunning = status.toLowerCase() === "on" || status.toLowerCase() === "auto";
+      
+      if (isRunning) {
+        pumpIcon.classList.remove('off');
+        pumpIcon.classList.add('on');
+        statusText.textContent = status.toUpperCase();
+        statusText.style.color = "var(--accent)";
+      } else {
+        pumpIcon.classList.remove('on');
+        pumpIcon.classList.add('off');
+        statusText.textContent = "ARRÊTÉ";
+        statusText.style.color = "var(--danger)";
+      }
+    }
+
+    window.sendMotorCommand = function(command) {
+      if (!mqttClient || !mqttClient.isConnected()) {
+        alert("Non connecté au broker MQTT.");
+        return;
+      }
+      
+      let topicKey;
+      let payloadToSend;
+      
+      if (command.startsWith('Speedinput:')) {
+          topicKey = 'cmdSpeedInput';
+          payloadToSend = command.split(':')[1];
+      } else {
+          topicKey = 'cmdStatus';
+          payloadToSend = command;
+      }
+      
+      const topic = getTopic(topicKey);
+      
+      const msg = new Paho.Message(payloadToSend);
+      msg.destinationName = topic;
+      mqttClient.send(msg);
+      
+      const timestamp = new Date().toLocaleTimeString();
+      logMessage(`📤 ${timestamp} — Commande envoyée: "${payloadToSend}" à ${topic}`);
+    };
+    
+    function logMessage(text) {
+      const logDiv = document.getElementById("log");
+      // Prepend message to the log
+      logDiv.textContent = text + "\n" + logDiv.textContent;
+    }
+
+    window.togglePanel = function(panelId) {
+      const panel = document.getElementById(panelId);
+      const header = panel.previousElementSibling;
+      
+      const isVisible = panel.style.display !== "none";
+      
+      panel.style.display = isVisible ? "none" : "block";
+      header.setAttribute('aria-expanded', !isVisible);
+      panel.setAttribute('aria-hidden', isVisible);
+    }
+
+    function showAlert(message, type) {
+      const alertDiv = document.createElement("div");
+      alertDiv.className = `alert ${type}`;
+      alertDiv.innerHTML = `<span>${type === 'alert-danger' ? '⚠️' : '❗'}</span> ${message}`;
+      
+      const alertsContainer = document.getElementById("dynamic-alerts");
+      
+      // Clear previous identical alerts to prevent spam
+      Array.from(alertsContainer.children).forEach(child => {
+          if(child.textContent.includes(message.split('!')[0])) {
+              child.remove();
+          }
+      });
+      
+      alertsContainer.prepend(alertDiv);
+      
+      // Remove alert after 8 seconds
+      setTimeout(() => {
+        alertDiv.remove();
+      }, 8000);
+    }
+    
+    // ========================================================
+    // Schedule Control Functions (Refined)
+    // ========================================================
+
+    function loadSchedules() {
+      const savedSchedules = localStorage.getItem('pumpSchedules');
+      schedules = savedSchedules ? JSON.parse(savedSchedules) : [];
+      renderSchedules();
+    }
+
+    function saveSchedules() {
+      localStorage.setItem('pumpSchedules', JSON.stringify(schedules));
+      
+      if (mqttClient && mqttClient.isConnected()) {
+        const msg = new Paho.Message(JSON.stringify(schedules));
+        msg.destinationName = getTopic('cmdSchedule');
+        mqttClient.send(msg);
+        logMessage("📤 Programmations envoyées au dispositif.");
+      }
+    }
+    
+    function sendScheduleRequest() {
+        if (!mqttClient || !mqttClient.isConnected()) return;
+        
+        const msg = new Paho.Message("GET");
+        msg.destinationName = getTopic('cmdSchedule');
+        mqttClient.send(msg);
+        logMessage("📤 Demande des programmations actuelles.");
+    }
+
+    function renderSchedules() {
+      const container = document.getElementById('schedule-container');
+      container.innerHTML = '';
+      
+      if (schedules.length === 0) {
+        container.innerHTML = '<p style="padding: 10px; color: #666;">Aucune programmation configurée. La pompe fonctionnera en mode manuel ou auto sans horaire.</p>';
+        return;
+      }
+      
+      schedules.forEach((schedule, index) => {
+        const scheduleItem = document.createElement('div');
+        scheduleItem.className = `schedule-item ${schedule.active ? '' : 'inactive'}`;
+        
+        const dayMap = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+        
+        scheduleItem.innerHTML = `
+          <div class="schedule-details">
+            <div class="schedule-day-selector">
+              ${dayMap.map((day, i) => `
+                <div class="day-chip ${schedule.days.includes(i) ? 'active' : ''}" 
+                     onclick="toggleScheduleDay(${index}, ${i})">${day}</div>
+              `).join('')}
+            </div>
+            <div class="time-control">
+              <div>
+                <label>Début</label>
+                <input type="time" class="time-input" value="${schedule.startTime}" 
+                       onchange="updateScheduleTime(${index}, 'startTime', this.value)">
+              </div>
+              <div>
+                <label>Fin</label>
+                <input type="time" class="time-input" value="${schedule.endTime}" 
+                       onchange="updateScheduleTime(${index}, 'endTime', this.value)">
+              </div>
+            </div>
+          </div>
+          <div class="schedule-controls">
+            <label style="display: flex; align-items: center; gap: 5px;">
+                Actif
+                <input type="checkbox" ${schedule.active ? 'checked' : ''} 
+                       onchange="toggleScheduleActive(${index}, this.checked)">
+            </label>
+            <button class="btn btn-danger" style="flex-grow: 0; padding: 10px;" onclick="removeSchedule(${index})">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        `;
+        container.appendChild(scheduleItem);
+      });
+    }
+
+    function addNewSchedule() {
+      schedules.push({
+        days: [1, 2, 3, 4, 5], // Monday to Friday (1-5)
+        startTime: '08:00',
+        endTime: '17:00',
+        active: true
+      });
+      saveSchedules();
+      renderSchedules();
+    }
+
+    function removeSchedule(index) {
+      if (confirm("Êtes-vous sûr de vouloir supprimer cette programmation ?")) {
+          schedules.splice(index, 1);
+          saveSchedules();
+          renderSchedules();
+      }
+    }
+
+    function toggleScheduleDay(scheduleIndex, dayIndex) {
+      const days = schedules[scheduleIndex].days;
+      const dayPos = days.indexOf(dayIndex);
+      if (dayPos === -1) {
+        days.push(dayIndex);
+      } else {
+        days.splice(dayPos, 1);
+      }
+      schedules[scheduleIndex].days.sort((a, b) => a - b); // Keep days ordered
+      saveSchedules();
+      renderSchedules();
+    }
+
+    function updateScheduleTime(scheduleIndex, field, value) {
+      schedules[scheduleIndex][field] = value;
+      saveSchedules();
+    }
+
+    function toggleScheduleActive(scheduleIndex, active) {
+      schedules[scheduleIndex].active = active;
+      saveSchedules();
+      renderSchedules(); // Re-render to update the visual style (inactive/active border)
+    }
+    
+    // Schedule Checker (Client-side fail-safe/validation)
+    function startScheduleChecker() {
+      if (scheduleCheckInterval) {
+        clearInterval(scheduleCheckInterval);
+      }
+      // Check schedules every minute
+      scheduleCheckInterval = setInterval(checkSchedules, 60000);
+      checkSchedules(); // Run immediately
+    }
+
+    function checkSchedules() {
+      // Note: For full reliability, the ESP32 should manage the schedule.
+      // This client-side check is primarily for visual feedback and as a simple fallback.
+      const now = new Date();
+      const currentDay = now.getDay(); // 0 (Sunday) to 6 (Saturday)
+      const currentTime = now.getHours().toString().padStart(2, '0') + ':' + 
+                          now.getMinutes().toString().padStart(2, '0');
+      
+      const vfdStatus = document.getElementById('status').textContent.toUpperCase();
+      
+      if (vfdStatus !== 'AUTO') return; // Only check if VFD is in AUTO mode
+
+      const shouldBeRunning = schedules.some(schedule => {
+          return schedule.active && 
+                 schedule.days.includes(currentDay) &&
+                 currentTime >= schedule.startTime && 
+                 currentTime < schedule.endTime;
+      });
+      
+      if (shouldBeRunning) {
+        if (vfdStatus !== 'ON') {
+          // sendMotorCommand('on'); // Avoid spamming commands, ESP32 handles this
+          logMessage(`[INFO] Pompe en mode Auto: Heure de début atteinte.`);
+        }
+      } else {
+        if (vfdStatus === 'ON') {
+          // sendMotorCommand('off'); // Avoid spamming commands, ESP32 handles this
+          logMessage(`[INFO] Pompe en mode Auto: Heure de fin atteinte.`);
+        }
+      }
+    }
+  </script>
+</body>
+</html>
