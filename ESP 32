@@ -1,0 +1,340 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <ModbusMaster.h>
+#include <ArduinoJson.h>
+#include <time.h>
+#include <esp_task_wdt.h> // Watchdog Timer
+
+// --- Hardware and Configuration Constants ---
+
+// WiFi Credentials
+const char *WIFI_SSID = "Wokwi-GUEST";
+const char *WIFI_PWD  = "";
+
+// MQTT Broker Settings (HiveMQ Cloud)
+const char *MQTT_BROKER   = "508205b2e19c4a7fad9828d3961d6424.s1.eu.hivemq.cloud";
+const int   MQTT_PORT     = 8883;
+const char *MQTT_USERNAME = "Device0001"; // Client username from Esp32.h
+const char *MQTT_PASSWORD = "Aa12345678"; // Client password from Esp32.h
+const char *MQTT_CLIENT_ID = "ESP32_VFD_Gateway";
+
+// VFD Modbus Configuration
+#define VFD_ADDRESS 1      // MODBUS address of VFD
+#define RS485_RX_PIN 16    // UART1 RX Pin
+#define RS485_TX_PIN 17    // UART1 TX Pin
+#define RS485_DE_PIN 4     // MAX485 DE/RE control pin (Using 4 from esp32VFD.h)
+#define STATUS_LED 2       // Onboard LED pin
+
+// Root CA certificate for HiveMQ Cloud (from Esp32.h)
+const char* root_ca =
+"-----BEGIN CERTIFICATE-----\n" \
+"MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n" \
+// ... (rest of certificate omitted for brevity)
+"emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n" \
+"-----END CERTIFICATE-----\n";
+
+// --- Global Objects ---
+ModbusMaster node;
+WiFiClientSecure espClient;
+PubSubClient mqttClient(espClient);
+HardwareSerial SerialRS485(1); // UART1
+
+// --- Global State Variables ---
+int currentSpeedSetpoint = 0; // Speed input (0-100)
+String vfdMode = "OFF";       // OFF, ON, AUTO
+StaticJsonDocument<512> scheduleDoc; // Holds received schedule
+unsigned long lastModbusRead = 0;
+const long ModbusInterval = 5000; // 5 seconds interval for Modbus polling
+
+// VFD Register Map (Consolidated from esp32VFD.h and expanded for topics)
+struct VfdRegister {
+  const char* name;      // Parameter name
+  uint16_t address;      // MODBUS register address
+  float scale;           // Scaling factor
+  const char* unit;      // Measurement unit (for debug)
+  const char* topic;     // MQTT Topic
+};
+
+VfdRegister vfdRegisters[] = {
+  {"Temperature", 0x100D, 0.1, "°C", "vfd/temperature"},
+  {"Speed", 0x1001, 0.01, "Hz", "vfd/speed"},
+  {"Status_Code", 0x2001, 1.0, "", "vfd/status_code"}, // Read-only status code
+  {"TensionIN", 0x1005, 0.1, "V", "vfd/tensionIN"},
+  {"CourantIN", 0x1006, 0.01, "A", "vfd/courantIN"},
+  {"CourantOUT", 0x1003, 0.01, "A", "vfd/courantOUT"},
+  {"Alarms", 0x2002, 1.0, "", "vfd/alertes"}
+};
+const uint8_t REG_COUNT = sizeof(vfdRegisters) / sizeof(vfdRegisters[0]);
+
+// MQTT Topics (Consolidated and standardized)
+struct {
+  const char* status = "vfd/status";          // Control command topic
+  const char* speedInput = "vfd/Speedinput";  // Speed setpoint topic
+  const char* schedule = "vfd/schedule";      // Schedule configuration topic
+  const char* availability = "vfd/status/availability";
+  const char* waterLevel = "vfd/niveau_eau";  // Simulated sensor (for completeness)
+  const char* etatReseau = "vfd/etat_reseau"; // Network status
+  const char* rssi = "vfd/rssi";              // WiFi RSSI
+} topics;
+
+// --- Function Prototypes ---
+void initWatchdog();
+void setupModbus();
+void connectWiFi();
+void setupMQTT();
+void reconnectMQTT();
+void callback(char* topic, byte* payload, unsigned int length);
+void handleSpeedInput(String value);
+void handleStatusCommand(String value);
+void handleScheduleCommand(String value);
+void publishModbusData();
+void publishSimulatedData(); // For non-Modbus data (e.g., water level, RSSI)
+
+// --- Modbus Interface Functions (from esp32VFD.h) ---
+void preTransmission() {
+  digitalWrite(RS485_DE_PIN, HIGH);
+}
+
+void postTransmission() {
+  digitalWrite(RS485_DE_PIN, LOW);
+}
+
+// ========================================================
+// SETUP
+// ========================================================
+void setup() {
+  Serial.begin(115200);
+  pinMode(STATUS_LED, OUTPUT);
+  digitalWrite(STATUS_LED, LOW); // Start LED off
+
+  setupModbus();
+  connectWiFi();
+  setupMQTT();
+  reconnectMQTT();
+  initWatchdog();
+
+  // Initialize VFD Mode to match client starting state
+  mqttClient.publish(topics.status, vfdMode.c_str(), true); // Retained message
+  mqttClient.publish(topics.speedInput, String(currentSpeedSetpoint).c_str(), true);
+  
+  Serial.println("System Initialization Complete.");
+}
+
+void initWatchdog() {
+  // Watchdog timer set to 10 seconds (standard practice)
+  esp_task_wdt_init(10, true);
+  esp_task_wdt_add(NULL); 
+}
+
+void setupModbus() {
+  pinMode(RS485_DE_PIN, OUTPUT);
+  digitalWrite(RS485_DE_PIN, LOW);
+  
+  SerialRS485.begin(9600, SERIAL_8N1, RS485_RX_PIN, RS485_TX_PIN); // 9600 baud, 8N1
+  node.begin(VFD_ADDRESS, SerialRS485);
+  node.preTransmission(preTransmission);
+  node.postTransmission(postTransmission);
+
+  Serial.println("MODBUS initialized on UART1.");
+}
+
+void connectWiFi() {
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(WIFI_SSID, WIFI_PWD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    digitalWrite(STATUS_LED, !digitalRead(STATUS_LED)); // Blink LED during connection
+  }
+  Serial.println("\nWiFi connected. IP: " + WiFi.localIP().toString());
+  digitalWrite(STATUS_LED, HIGH); // Solid LED on success
+  // Sync time for reliable timestamping
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+}
+
+void setupMQTT() {
+  espClient.setCACert(root_ca);
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+  mqttClient.setCallback(callback);
+  mqttClient.setKeepAlive(30);
+  mqttClient.setSocketTimeout(30);
+}
+
+void reconnectMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.print("Connecting to MQTT...");
+    // Attempt to connect with Last Will and Testament (LWT)
+    if (mqttClient.connect(
+          MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD,
+          topics.availability, 1, true, "offline")) {
+      
+      Serial.println("connected.");
+      mqttClient.publish(topics.availability, "online", true); // Status to online (retained)
+      
+      // Subscribe to control topics
+      mqttClient.subscribe(topics.status);
+      mqttClient.subscribe(topics.speedInput);
+      mqttClient.subscribe(topics.schedule);
+      
+    } else {
+      Serial.printf("failed, rc=%d. Retrying in 5s\n", mqttClient.state());
+      delay(5000);
+    }
+  }
+}
+
+// ========================================================
+// MQTT CALLBACKS (Command Handling)
+// ========================================================
+void callback(char* topic, byte* payload, unsigned int length) {
+  payload[length] = '\0';
+  String msg = String((char*)payload);
+
+  Serial.printf("MQTT Command [%s]: %s\n", topic, msg.c_str());
+
+  if (strcmp(topic, topics.speedInput) == 0)
+    handleSpeedInput(msg);
+  else if (strcmp(topic, topics.status) == 0)
+    handleStatusCommand(msg);
+  else if (strcmp(topic, topics.schedule) == 0)
+    handleScheduleCommand(msg);
+
+  // Blink LED to indicate command received
+  digitalWrite(STATUS_LED, LOW);
+  delay(50);
+  digitalWrite(STATUS_LED, HIGH);
+}
+
+void handleSpeedInput(String value) {
+  int speed = value.toInt();
+  if (speed >= 0 && speed <= 100) {
+    currentSpeedSetpoint = speed;
+    
+    // Convert 0-100% to VFD frequency setpoint (assuming 50Hz max for example)
+    // F0.00 is the register for command frequency (if applicable, consult VFD manual)
+    // Example: node.writeSingleRegister(0x0000, speed * 100); // Set speed value (scaled by 100)
+    
+    Serial.printf("New Speed Setpoint: %d%%\n", speed);
+  }
+}
+
+void handleStatusCommand(String value) {
+  value.toUpperCase();
+  
+  if (value == "ON" || value == "OFF" || value == "AUTO") {
+    vfdMode = value;
+    
+    // --- VFD Control Logic (Example) ---
+    // If VFD uses Modbus to Start/Stop (e.g., control word 0x0001)
+    // if (value == "ON") {
+    //   node.writeSingleRegister(0x0001, 0x0008); // Example: Forward command
+    // } else if (value == "OFF") {
+    //   node.writeSingleRegister(0x0001, 0x0001); // Example: Stop command
+    // }
+    
+    // Publish confirmation back to status topic (retained)
+    mqttClient.publish(topics.status, vfdMode.c_str(), true);
+    Serial.printf("VFD Mode Set: %s\n", vfdMode.c_str());
+    
+  } else if (value == "GET_SCHEDULES") {
+    // Client requested schedule data (Handle in handleScheduleCommand)
+  }
+}
+
+void handleScheduleCommand(String value) {
+  if (value == "GET") {
+    // If the client sends "GET", publish the current stored schedule
+    char payload[512];
+    serializeJson(scheduleDoc, payload);
+    mqttClient.publish(topics.schedule, payload, true);
+    Serial.println("Published stored schedule to client.");
+  } else {
+    // Assume payload is a JSON array of schedules
+    DeserializationError error = deserializeJson(scheduleDoc, value);
+    if (error) {
+      Serial.printf("Failed to parse schedule JSON: %s\n", error.c_str());
+    } else {
+      Serial.println("New schedule received and stored.");
+      mqttClient.publish(topics.schedule, value.c_str(), true); // Echo back (retained)
+      // Implementation: Check the scheduleDoc structure and update VFD logic here
+    }
+  }
+}
+
+// ========================================================
+// LOOP & DATA PUBLISHING
+// ========================================================
+void loop() {
+  // 1. Connection Management
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi();
+  }
+
+  if (!mqttClient.connected()) {
+    reconnectMQTT();
+  }
+  mqttClient.loop();
+
+  // 2. Data Acquisition and Publishing
+  if (millis() - lastModbusRead >= ModbusInterval) {
+    publishModbusData();
+    publishSimulatedData(); // Publish data not from Modbus (e.g., RSSI)
+    lastModbusRead = millis();
+  }
+
+  // 3. System Watchdog Reset
+  esp_task_wdt_reset(); 
+  delay(10); // Yield to other tasks
+}
+
+void publishModbusData() {
+  for (uint8_t i = 0; i < REG_COUNT; i++) {
+    uint8_t result = node.readHoldingRegisters(vfdRegisters[i].address, 1);
+    
+    if (result == node.ku8MBSuccess) {
+      // Calculate scaled floating point value
+      float value = node.getResponseBuffer(0) * vfdRegisters[i].scale;
+      
+      // Format value to string
+      char payload[16];
+      // Use dtostrf for float to string conversion (e.g., 2 decimal places)
+      dtostrf(value, 0, 2, payload);
+      
+      // Publish to respective topic
+      mqttClient.publish(vfdRegisters[i].topic, payload);
+      Serial.printf("Published %s: %s\n", vfdRegisters[i].name, payload);
+    } else {
+      Serial.printf("MODBUS Read Failed for %s (code %d)\n", vfdRegisters[i].name, result);
+      // Publish an alarm if Modbus communication fails repeatedly
+      // mqttClient.publish(topics.alertes, "MODBUS_FAILURE");
+    }
+    delay(100); // Small delay between reading registers
+  }
+}
+
+void publishSimulatedData() {
+  // --- Publish Water Level (Simulated for this consolidated code) ---
+  int waterLevel = random(5, 100);
+  mqttClient.publish(topics.waterLevel, String(waterLevel).c_str());
+
+  // --- Publish Network Status (Real-time RSSI and Status String) ---
+  long rssi = WiFi.RSSI();
+  mqttClient.publish(topics.rssi, String(rssi).c_str());
+
+  const char* networkStatus = (rssi > -75) ? "STABLE" : "WEAK_SIGNAL";
+  mqttClient.publish(topics.etatReseau, networkStatus);
+
+  // --- Publish Simulated Alarms (for testing client alerts) ---
+  if (random(0, 50) < 3) { // 3% chance of alarm
+    const char* alarmStates[] = {"OVERVOLTAGE", "LOW_WATER", "MOTOR_OVERHEAT"};
+    mqttClient.publish(topics.alertes, alarmStates[random(0, 3)]);
+  } else {
+     mqttClient.publish(topics.alertes, "Aucune");
+  }
+  
+  // Blink LED to confirm publishing cycle
+  digitalWrite(STATUS_LED, LOW);
+  delay(100);
+  digitalWrite(STATUS_LED, HIGH);
+}
